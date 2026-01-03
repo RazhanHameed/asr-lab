@@ -147,6 +147,29 @@ class MelSpectrogramExtractor(FeatureExtractor):
         )
         return cls(config)
 
+    @classmethod
+    def ssm_style(cls) -> "MelSpectrogramExtractor":
+        """Create SSM-ASR style mel spectrogram extractor.
+
+        Matches ABR asr-19m-v2 configuration:
+        - 80 mel filterbank bins
+        - 25ms window size (400 samples at 16kHz)
+        - 10ms window stride (160 samples at 16kHz)
+        - 0-8000 Hz frequency range
+        """
+        config = FeatureConfig(
+            sample_rate=16000,
+            n_mels=80,
+            n_fft=400,  # 25ms at 16kHz
+            hop_length=160,  # 10ms at 16kHz
+            win_length=400,  # 25ms at 16kHz
+            f_min=0.0,
+            f_max=8000.0,
+            normalize=True,
+            log_mel=True,
+        )
+        return cls(config)
+
 
 class MFCCExtractor(FeatureExtractor):
     """MFCC feature extractor.

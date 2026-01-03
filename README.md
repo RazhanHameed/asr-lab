@@ -86,6 +86,26 @@ model = ConformerASRModel(ConformerConfig.fast_conformer())
 
 ## Training
 
+### Training SSM-ASR (19M Parameters, 15k Hours)
+
+Train a model similar to [ABR asr-19m-v2-en-32b](https://huggingface.co/abr-ai/asr-19m-v2-en-32b):
+
+```bash
+# 1. Prepare data from HuggingFace datasets
+uv run python scripts/prepare_data.py \
+    --output_dir data/manifests \
+    --datasets librispeech_clean librispeech_other voxpopuli gigaspeech common_voice tedlium ami spgispeech earnings22
+
+# 2. Train SentencePiece tokenizer (256 vocab)
+uv run python scripts/train_tokenizer.py \
+    --manifests data/manifests/*_train.json \
+    --output tokenizers/spm_256 \
+    --vocab_size 256
+
+# 3. Train on 2x A100 GPUs
+./scripts/run_training.sh --gpus 2 --config configs/ssm_19m_a100.yaml
+```
+
 ### Single GPU
 
 ```bash
@@ -100,11 +120,18 @@ uv run python scripts/train.py \
 ### Multi-GPU (DDP)
 
 ```bash
-uv run torchrun --nproc-per-node 8 scripts/train.py \
-    --model conformer \
-    --config large \
-    --batch-size 16 \
-    --gradient-accumulation 4
+# Using torchrun directly
+uv run torchrun --nproc_per_node=2 scripts/train_distributed.py \
+    --config configs/ssm_19m_a100.yaml
+
+# Or using the launch script
+./scripts/run_training.sh --gpus 2 --config configs/ssm_19m_a100.yaml
+```
+
+### Resume Training
+
+```bash
+./scripts/run_training.sh --gpus 2 --resume outputs/ssm_19m_en/checkpoint_epoch_10.pt
 ```
 
 ### Multi-GPU (FSDP)
@@ -302,6 +329,7 @@ print(text)
 
 ## References
 
+- [ABR asr-19m-v2-en-32b](https://huggingface.co/abr-ai/asr-19m-v2-en-32b) - SSM ASR Model (19M params, 15k hours)
 - [Mamba](https://arxiv.org/abs/2312.00752) - Linear-Time Sequence Modeling
 - [Mamba-2](https://arxiv.org/abs/2405.21060) - Structured State Space Duality
 - [Fast Conformer](https://arxiv.org/abs/2305.05084) - Efficient Speech Recognition

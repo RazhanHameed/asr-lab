@@ -58,6 +58,8 @@ training = [
     "soundfile>=0.12.0",
     "accelerate>=0.28.0",
     "jiwer>=3.0.0",
+    "pyyaml>=6.0.0",
+    "huggingface-hub>=0.21.0",
 ]
 
 # NVIDIA Transformer Engine for FP8

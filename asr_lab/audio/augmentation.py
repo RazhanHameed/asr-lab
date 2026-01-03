@@ -33,10 +33,24 @@ class SpecAugment(nn.Module):
     Reference: https://arxiv.org/abs/1904.08779
     """
 
-    def __init__(self, config: SpecAugmentConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: SpecAugmentConfig | None = None,
+        freq_mask_param: int | None = None,
+        time_mask_param: int | None = None,
+        num_freq_masks: int | None = None,
+        num_time_masks: int | None = None,
+        time_mask_ratio: float | None = None,
+    ) -> None:
         super().__init__()
         if config is None:
-            config = SpecAugmentConfig()
+            config = SpecAugmentConfig(
+                freq_mask_param=freq_mask_param or 27,
+                time_mask_param=time_mask_param or 100,
+                num_freq_masks=num_freq_masks or 2,
+                num_time_masks=num_time_masks or 2,
+                time_mask_ratio=time_mask_ratio or 0.05,
+            )
         self.config = config
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:

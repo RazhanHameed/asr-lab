@@ -10,8 +10,14 @@ ASR Lab is a modular ASR (Automatic Speech Recognition) training framework suppo
 # Install dependencies
 uv sync --extra cuda --extra training
 
-# Run training
-uv run python scripts/train.py --model ssm --config base
+# Prepare training data (15k hours)
+uv run python scripts/prepare_data.py --output_dir data/manifests --all
+
+# Train SentencePiece tokenizer
+uv run python scripts/train_tokenizer.py --manifests data/manifests/*_train.json --output tokenizers/spm_256
+
+# Distributed training (2x A100)
+./scripts/run_training.sh --gpus 2 --config configs/ssm_19m_a100.yaml
 
 # Run evaluation
 uv run python scripts/evaluate.py --checkpoint outputs/best.pt --dataset fleurs
@@ -38,6 +44,9 @@ asr_lab/
 ├── audio/            # Audio processing
 │   ├── features.py   # Mel spectrogram, MFCC extraction
 │   └── augmentation.py  # SpecAugment, noise injection
+├── data/             # Data loading and preparation
+│   ├── datasets.py   # Multi-dataset loader (15k hours)
+│   └── manifest.py   # Manifest file utilities
 ├── tokenizers/       # Text tokenization
 │   └── base.py       # Character and BPE tokenizers
 ├── training/         # Training utilities
@@ -54,8 +63,14 @@ asr_lab/
 └── utils/
     └── metrics.py    # WER, CER computation
 scripts/
-├── train.py          # Training entrypoint
-└── evaluate.py       # Evaluation entrypoint
+├── train.py              # Training entrypoint
+├── train_distributed.py  # Distributed DDP training
+├── train_tokenizer.py    # SentencePiece tokenizer training
+├── prepare_data.py       # Data preparation from HuggingFace
+├── run_training.sh       # Training launch script
+└── evaluate.py           # Evaluation entrypoint
+configs/
+└── ssm_19m_a100.yaml     # 19M param SSM config for 2x A100
 ```
 
 ## Architecture Patterns

@@ -151,11 +151,14 @@ logs/
 # Documentation (generated)
 docs/
 
-# Data
-data/
+# Data (but not the asr_lab/data module)
+/data/
 *.wav
 *.mp3
 *.flac
+
+# Keep asr_lab/data module
+!asr_lab/data/
 
 # Tokenizer models
 *.model
