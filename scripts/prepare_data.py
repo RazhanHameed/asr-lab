@@ -4,15 +4,22 @@
 This script downloads and converts ASR datasets to manifest format for training.
 Target: ~15,000 hours of English speech data matching ABR model training setup.
 
+Data is saved to /data/razhan/15k_hours/{dataset_name}/ with structure:
+    /data/razhan/15k_hours/{dataset_name}/audio/     - Audio files
+    /data/razhan/15k_hours/{dataset_name}/manifests/ - Manifest JSON files
+
 Usage:
     # Prepare all datasets
-    python scripts/prepare_data.py --output_dir data/manifests --all
+    python scripts/prepare_data.py --all
 
     # Prepare specific datasets
-    python scripts/prepare_data.py --output_dir data/manifests --datasets librispeech voxpopuli
+    python scripts/prepare_data.py --datasets librispeech_clean_100 voxpopuli
 
     # Small subset for testing
-    python scripts/prepare_data.py --output_dir data/manifests --datasets librispeech --max_samples 1000
+    python scripts/prepare_data.py --datasets librispeech_clean_100 --max_samples 1000
+
+    # Custom base directory
+    python scripts/prepare_data.py --base_dir /custom/path --datasets librispeech_clean_100
 """
 
 import argparse
@@ -163,8 +170,7 @@ DATASETS: dict[str, DatasetConfig] = {
 
 def prepare_dataset(
     config: DatasetConfig,
-    output_dir: Path,
-    audio_dir: Path,
+    base_dir: Path,
     sample_rate: int = 16000,
     max_samples: int | None = None,
     use_streaming: bool = True,
@@ -173,8 +179,7 @@ def prepare_dataset(
 
     Args:
         config: Dataset configuration
-        output_dir: Directory for manifest files
-        audio_dir: Directory for audio files
+        base_dir: Base directory (e.g., /data/razhan)
         sample_rate: Target sample rate
         max_samples: Maximum samples per split
         use_streaming: Use streaming for large datasets
@@ -184,9 +189,13 @@ def prepare_dataset(
     """
     from datasets import load_dataset
 
+    # Create dataset-specific directories
+    dataset_dir = base_dir / config.name
+    output_dir = dataset_dir / "manifests"
+    audio_dir = dataset_dir / "audio"
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset_audio_dir = audio_dir / config.name
-    dataset_audio_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_paths: dict[str, Path] = {}
 
@@ -263,7 +272,7 @@ def prepare_dataset(
                         continue
 
                     # Save audio file
-                    audio_path = dataset_audio_dir / f"{split_suffix}_{idx:08d}.wav"
+                    audio_path = audio_dir / f"{split_suffix}_{idx:08d}.wav"
                     torchaudio.save(str(audio_path), audio_tensor.unsqueeze(0), sample_rate)
 
                     # Write manifest entry
@@ -291,16 +300,10 @@ def prepare_dataset(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare ASR training data")
     parser.add_argument(
-        "--output_dir",
+        "--base_dir",
         type=str,
-        default="data/manifests",
-        help="Directory for manifest files",
-    )
-    parser.add_argument(
-        "--audio_dir",
-        type=str,
-        default="data/audio",
-        help="Directory for audio files",
+        default="/data/razhan/15k_hours",
+        help="Base directory for datasets (default: /data/razhan/15k_hours)",
     )
     parser.add_argument(
         "--datasets",
@@ -333,8 +336,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
-    audio_dir = Path(args.audio_dir)
+    base_dir = Path(args.base_dir)
 
     # Determine which datasets to prepare
     if args.all:
@@ -346,9 +348,9 @@ def main() -> None:
         print(f"Available datasets: {', '.join(DATASETS.keys())}")
         return
 
-    print(f"Preparing {len(dataset_names)} datasets:")
+    print(f"Preparing {len(dataset_names)} datasets to {base_dir}:")
     for name in dataset_names:
-        print(f"  - {name}")
+        print(f"  - {name} -> {base_dir / name}/")
 
     # Prepare each dataset
     all_manifests: dict[str, dict[str, Path]] = {}
@@ -363,8 +365,7 @@ def main() -> None:
         try:
             manifests = prepare_dataset(
                 config,
-                output_dir,
-                audio_dir,
+                base_dir,
                 sample_rate=args.sample_rate,
                 max_samples=args.max_samples,
                 use_streaming=not args.no_streaming,

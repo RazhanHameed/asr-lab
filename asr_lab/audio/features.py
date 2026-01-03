@@ -3,9 +3,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+import soundfile as sf
 import torch
 import torch.nn as nn
-import torchaudio
 import torchaudio.transforms as T
 
 
@@ -234,15 +234,18 @@ def load_audio(
     Returns:
         Waveform tensor of shape (samples,)
     """
-    waveform, sr = torchaudio.load(path)
+    # Use soundfile to load audio (avoids torchcodec dependency)
+    audio_array, sr = sf.read(path, dtype="float32")
+    waveform = torch.from_numpy(audio_array)
 
-    # Convert to mono
-    if waveform.size(0) > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
+    # Handle stereo -> mono
+    if waveform.ndim > 1:
+        waveform = waveform.mean(dim=-1)
 
     # Resample if needed
     if sr != target_sr:
+        waveform = waveform.unsqueeze(0)
         resampler = T.Resample(sr, target_sr)
-        waveform = resampler(waveform)
+        waveform = resampler(waveform).squeeze(0)
 
-    return waveform.squeeze(0)
+    return waveform

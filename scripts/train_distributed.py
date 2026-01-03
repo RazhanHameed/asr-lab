@@ -14,11 +14,13 @@ Usage:
 import argparse
 import json
 import os
+import random
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+from jiwer import cer, wer
 
 # Suppress CTC backward determinism warning (known issue)
 warnings.filterwarnings("ignore", message=".*ctc_loss_backward_gpu.*")
@@ -252,19 +254,41 @@ def train_epoch(
     return total_loss / max(num_batches, 1)
 
 
+def ctc_greedy_decode(logits: torch.Tensor, lengths: torch.Tensor, blank_id: int = 0) -> list[list[int]]:
+    """Greedy CTC decoding."""
+    predictions = logits.argmax(dim=-1)  # [B, T]
+    decoded = []
+    for i, length in enumerate(lengths):
+        pred = predictions[i, :length].tolist()
+        # Remove consecutive duplicates and blanks
+        result = []
+        prev = None
+        for token in pred:
+            if token != prev and token != blank_id:
+                result.append(token)
+            prev = token
+        decoded.append(result)
+    return decoded
+
+
 @torch.no_grad()
 def evaluate(
     model: DDP,
     val_loader: DataLoader,
     precision_manager: object,
+    tokenizer: object,
     rank: int,
+    num_samples: int = 2,
 ) -> dict[str, float]:
-    """Evaluate model on validation set."""
+    """Evaluate model on validation set with WER/CER calculation."""
     model.eval()
     device = next(model.parameters()).device
 
     total_loss = 0.0
     num_batches = 0
+    all_predictions: list[str] = []
+    all_references: list[str] = []
+    sample_pairs: list[tuple[str, str]] = []
 
     for batch in tqdm(val_loader, desc="Evaluating", disable=rank != 0):
         batch = {k: v.to(device) for k, v in batch.items()}
@@ -279,12 +303,60 @@ def evaluate(
             total_loss += outputs["loss"].item()
             num_batches += 1
 
-    # Reduce across processes
+            # Decode predictions
+            logits = outputs["logits"]
+            output_lengths = outputs.get("output_lengths", batch["feature_lengths"] // 4)
+            decoded_ids = ctc_greedy_decode(logits, output_lengths)
+
+            # Convert to text
+            for i in range(len(decoded_ids)):
+                pred_text = tokenizer.decode(decoded_ids[i])
+                ref_ids = batch["tokens"][i, :batch["token_lengths"][i]].tolist()
+                ref_text = tokenizer.decode(ref_ids)
+
+                all_predictions.append(pred_text)
+                all_references.append(ref_text)
+                sample_pairs.append((ref_text, pred_text))
+
+    # Reduce loss across processes
     loss_tensor = torch.tensor([total_loss, num_batches], device=device)
     dist.all_reduce(loss_tensor)
     total_loss, num_batches = loss_tensor.tolist()
+    avg_loss = total_loss / max(num_batches, 1)
 
-    return {"val_loss": total_loss / max(num_batches, 1)}
+    # Calculate WER/CER (only on rank 0 to avoid duplicate computation)
+    metrics = {"val_loss": avg_loss, "wer": 0.0, "cer": 0.0}
+    if rank == 0 and all_predictions and all_references:
+        # Filter out empty references
+        valid_pairs = [(r, p) for r, p in zip(all_references, all_predictions) if r.strip()]
+        if valid_pairs:
+            refs, preds = zip(*valid_pairs)
+            metrics["wer"] = wer(list(refs), list(preds))
+            metrics["cer"] = cer(list(refs), list(preds))
+
+        # Print random samples
+        if sample_pairs:
+            print(f"\n  Sample outputs ({num_samples} random):")
+            print("  " + "-" * 60)
+            samples = random.sample(sample_pairs, min(num_samples, len(sample_pairs)))
+            for idx, (ref, pred) in enumerate(samples, 1):
+                print(f"  [{idx}] REF: {ref[:100]}{'...' if len(ref) > 100 else ''}")
+                print(f"      HYP: {pred[:100]}{'...' if len(pred) > 100 else ''}")
+            print("  " + "-" * 60)
+
+    return metrics
+
+
+def rotate_checkpoints(output_dir: Path, keep_last: int = 3) -> None:
+    """Delete old epoch checkpoints, keeping only the last N."""
+    epoch_checkpoints = sorted(
+        output_dir.glob("checkpoint_epoch_*.pt"),
+        key=lambda p: int(p.stem.split("_")[-1]),
+    )
+    if len(epoch_checkpoints) > keep_last:
+        for ckpt in epoch_checkpoints[:-keep_last]:
+            ckpt.unlink()
+            print(f"Deleted old checkpoint: {ckpt}")
 
 
 def save_checkpoint(
@@ -295,8 +367,9 @@ def save_checkpoint(
     config: dict,
     output_dir: Path,
     name: str,
+    keep_last: int = 3,
 ) -> None:
-    """Save training checkpoint."""
+    """Save training checkpoint and rotate old ones."""
     checkpoint = {
         "model_state_dict": model.module.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
@@ -312,6 +385,10 @@ def save_checkpoint(
     checkpoint_path = output_dir / f"checkpoint_{name}.pt"
     torch.save(checkpoint, checkpoint_path)
     print(f"Saved checkpoint: {checkpoint_path}")
+
+    # Rotate epoch checkpoints (keep only last N)
+    if name.startswith("epoch_"):
+        rotate_checkpoints(output_dir, keep_last=keep_last)
 
 
 def load_checkpoint(
@@ -530,11 +607,16 @@ def main() -> None:
 
         # Evaluate
         if val_loader and (epoch + 1) % 1 == 0:
-            metrics = evaluate(model, val_loader, precision_manager, rank)
+            metrics = evaluate(model, val_loader, precision_manager, tokenizer, rank)
             if rank == 0:
-                print(f"Epoch {epoch + 1} - Val Loss: {metrics['val_loss']:.4f}")
+                print(f"Epoch {epoch + 1} - Val Loss: {metrics['val_loss']:.4f} | WER: {metrics['wer']:.2%} | CER: {metrics['cer']:.2%}")
 
-                if metrics["val_loss"] < state.best_val_loss:
+                # Save best based on WER (or val_loss if WER is 0)
+                current_wer = metrics["wer"]
+                if current_wer > 0 and current_wer < state.best_wer:
+                    state.best_wer = current_wer
+                    save_checkpoint(model, optimizer, scheduler, state, config, output_dir, "best")
+                elif current_wer == 0 and metrics["val_loss"] < state.best_val_loss:
                     state.best_val_loss = metrics["val_loss"]
                     save_checkpoint(model, optimizer, scheduler, state, config, output_dir, "best")
 

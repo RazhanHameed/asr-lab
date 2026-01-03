@@ -48,7 +48,7 @@ tokenizer:
 training:
   # Optimization
   epochs: 100
-  batch_size: 256  # Per GPU (maximizing A100 80GB utilization)
+  batch_size: 256  # Per GPU
   gradient_accumulation_steps: 1  # Effective batch = 256 * 1 * 2 GPUs = 512
   learning_rate: 5.0e-4
   min_learning_rate: 1.0e-6
@@ -61,7 +61,7 @@ training:
 
   # Precision
   precision: bf16
-  compile: true  # Use torch.compile
+  compile: false  # Disabled for faster startup (enable for production)
 
   # Regularization
   label_smoothing: 0.1
@@ -73,7 +73,7 @@ training:
   logging_steps: 100
 
   # Output
-  output_dir: outputs/ssm_19m_en
+  output_dir: /data/razhan/15k_hours/outputs/ssm_19m_en
 
   # Reproducibility
   seed: 42
@@ -89,17 +89,27 @@ distributed:
 
 # Data
 data:
-  # Training manifests (currently using LibriSpeech, add more as they're prepared)
+  # Training manifests (add more as they're prepared with prepare_data.py)
   train_manifests:
-    - data/manifests/librispeech_train_clean_100.json
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_train.json
+    # - /data/razhan/15k_hours/librispeech_clean_360/manifests/librispeech_clean_360_train.json
+    # - /data/razhan/15k_hours/librispeech_other/manifests/librispeech_other_train.json
+    # - /data/razhan/15k_hours/voxpopuli/manifests/voxpopuli_train.json
+    # - /data/razhan/15k_hours/common_voice/manifests/common_voice_train.json
+    # - /data/razhan/15k_hours/tedlium/manifests/tedlium_train.json
+    # - /data/razhan/15k_hours/gigaspeech/manifests/gigaspeech_train.json
+    # - /data/razhan/15k_hours/ami/manifests/ami_train.json
+    # - /data/razhan/15k_hours/spgispeech/manifests/spgispeech_train.json
+    # - /data/razhan/15k_hours/earnings22/manifests/earnings22_train.json
+    # - /data/razhan/15k_hours/peoples_speech/manifests/peoples_speech_train.json
 
   # Validation manifests
   val_manifests:
-    - data/manifests/librispeech_dev_clean.json
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_dev.json
 
   # Test manifests
   test_manifests:
-    - data/manifests/librispeech_test_clean.json
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_test.json
 
   # Data filtering
   max_duration: 30.0  # seconds
@@ -147,4 +157,4 @@ logging:
 
   tensorboard:
     enabled: true
-    log_dir: outputs/ssm_19m_en/tensorboard
+    log_dir: /data/razhan/15k_hours/outputs/ssm_19m_en/tensorboard
