@@ -70,11 +70,6 @@ torchao = [
     "torchao>=0.8.0",
 ]
 
-# Reproducible training (Microsoft RepDL)
-reproducible = [
-    "repdl @ git+https://github.com/microsoft/RepDL.git",
-]
-
 # Development tools
 dev = [
     "pytest>=8.0.0",
@@ -97,7 +92,7 @@ cuda = [
 
 # Everything
 all = [
-    "asr-lab[cuda,training,reproducible,dev]",
+    "asr-lab[cuda,training,dev]",
 ]
 
 [project.scripts]

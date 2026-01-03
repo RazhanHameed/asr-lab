@@ -5,7 +5,7 @@ A modular, reproducible ASR training framework supporting multiple architectures
 ## Features
 
 - **Multiple Architectures**: SSM (Mamba2), Whisper-like, Fast Conformer
-- **Reproducible Training**: Integration with Microsoft RepDL for bitwise reproducibility
+- **Reproducible Training**: Built-in deterministic seeding, environment capture, and hash verification
 - **Multi-Precision**: FP32, FP16, BF16, FP8 (H100), MXFP8/MXFP4 (B200)
 - **Streaming + Offline**: Both real-time and high-accuracy inference modes
 - **Modular Design**: Mix and match encoders, decoders, and training strategies
@@ -190,6 +190,11 @@ asr-lab/
 │   │   └── dataset.py        # Dataset utilities
 │   ├── evaluation/
 │   │   └── evaluator.py      # Evaluation utilities
+│   ├── reproducibility/
+│   │   ├── seeding.py        # Deterministic seeding
+│   │   ├── deterministic.py  # Deterministic mode settings
+│   │   ├── hash.py           # Hash verification utilities
+│   │   └── environment.py    # Environment capture
 │   └── utils/
 │       └── metrics.py        # WER, CER computation
 ├── scripts/
@@ -203,16 +208,35 @@ asr-lab/
 
 ## Reproducible Training
 
-ASR Lab integrates with [Microsoft RepDL](https://github.com/microsoft/RepDL) for bitwise reproducible training across different hardware:
+ASR Lab includes built-in reproducibility features for consistent training across different hardware:
+
+```python
+from asr_lab.reproducibility import (
+    set_seed,
+    enable_deterministic_mode,
+    capture_environment,
+    get_model_hash,
+)
+
+# Set deterministic mode for reproducible training
+enable_deterministic_mode()
+set_seed(42)
+
+# Capture environment for experiment tracking
+env = capture_environment()
+save_environment(env, "outputs/environment.json")
+
+# Verify model reproducibility with hashes
+model_hash = get_model_hash(model)
+print(f"Model hash: {model_hash}")
+```
 
 ```bash
-# Install with reproducibility support
-uv sync --extra reproducible
-
-# Train with reproducible operations
+# Train with reproducibility enabled
 uv run python scripts/train.py \
     --model ssm \
-    --reproducible
+    --seed 42 \
+    --deterministic
 ```
 
 ## Installation
@@ -243,7 +267,6 @@ uv sync --all-extras
 | `training` | Datasets, TensorBoard, W&B |
 | `transformer-engine` | NVIDIA FP8 support |
 | `torchao` | TorchAO (MXFP8, MXFP4) |
-| `reproducible` | Microsoft RepDL |
 | `dev` | Development tools |
 
 ## Python API
@@ -279,7 +302,6 @@ print(text)
 
 ## References
 
-- [Microsoft RepDL](https://github.com/microsoft/RepDL) - Reproducible Deep Learning
 - [Mamba](https://arxiv.org/abs/2312.00752) - Linear-Time Sequence Modeling
 - [Mamba-2](https://arxiv.org/abs/2405.21060) - Structured State Space Duality
 - [Fast Conformer](https://arxiv.org/abs/2305.05084) - Efficient Speech Recognition
