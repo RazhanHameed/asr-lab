@@ -1,0 +1,145 @@
+# Omni-Router MoE ASR Training Configuration
+# Architecture: Apple's ASRU 2025 Omni-Router with shared routing
+# Target: ~343M parameter MoE model (4 experts per layer)
+# Hardware: 2x A100 80GB GPUs
+
+# Model Architecture
+model:
+  type: omni_router
+  d_model: 768
+  n_layers: 16
+  n_heads: 12
+  mlp_dim: 3072
+  vocab_size: 4096
+  n_mels: 80
+  dropout: 0.1
+
+  # MoE Configuration (key innovation)
+  n_experts: "4x4-4x4-4x4-4x4"  # 4 layers x 4 experts per group
+  share_router: true  # Shared routing across layers in each group
+  load_balance_loss_weight: 0.01
+  moe_jitter_eps: 0.1
+
+  # Encoder settings
+  stacking: 4  # Frame stacking for 4x downsampling
+  content_scale: 1.0
+  layer_dropout: 0.0
+  ln_position: pre
+  mask_mode: non_causal  # Use causal for streaming
+  ln_epsilon: 1.0e-5
+  bias: false
+
+  # CAPE positional embeddings
+  cape_config:
+    max_global_shift: 5.0
+    max_local_shift: 0.5
+    max_global_scaling: 1.0
+    normalize: true
+    freq_scale: 1.0
+
+  decoder_type: ctc
+
+# Feature Extraction
+features:
+  type: mel_spectrogram
+  sample_rate: 16000
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  f_min: 0.0
+  f_max: 8000.0
+  normalize: true
+  log_mel: true
+
+# Tokenizer
+tokenizer:
+  type: sentencepiece
+  model_path: tokenizers/spm_4096.model
+  vocab_size: 4096
+
+# Training
+training:
+  epochs: 100
+  batch_size: 64  # Per GPU (MoE uses less memory per token than dense)
+  gradient_accumulation_steps: 4  # Effective batch = 64 * 4 * 2 GPUs = 512
+  learning_rate: 3.0e-4
+  min_learning_rate: 1.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  # Learning rate schedule
+  warmup_steps: 5000
+  lr_scheduler: cosine
+
+  # Precision
+  precision: bf16
+  compile: false
+
+  # Regularization
+  label_smoothing: 0.1
+  spec_augment: true
+
+  # Checkpointing
+  save_steps: 5000
+  eval_steps: 2500
+  logging_steps: 100
+
+  # Output
+  output_dir: /data/razhan/15k_hours/outputs/omni_router_base
+
+  # Reproducibility
+  seed: 42
+  deterministic: true
+
+# Distributed Training
+distributed:
+  strategy: ddp
+  backend: nccl
+  find_unused_parameters: false
+  gradient_as_bucket_view: true
+  static_graph: true
+
+# Data
+data:
+  train_manifests:
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_train.json
+
+  val_manifests:
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_dev.json
+
+  test_manifests:
+    - /data/razhan/15k_hours/librispeech_clean_100/manifests/librispeech_clean_100_test.json
+
+  max_duration: 30.0
+  min_duration: 0.5
+  max_text_length: 512
+
+# Data Augmentation
+augmentation:
+  spec_augment:
+    enabled: true
+    freq_mask_param: 27
+    time_mask_param: 100
+    num_freq_masks: 2
+    num_time_masks: 10
+
+  noise_injection:
+    enabled: false
+
+  speed_perturbation:
+    enabled: true
+    speeds: [0.9, 1.0, 1.1]
+
+# Logging
+logging:
+  wandb:
+    enabled: true
+    project: omni-router-asr
+    entity: null
+    name: omni_router_base_15k
+    tags: ["omni-router", "moe", "english", "shared-routing"]
+
+  tensorboard:
+    enabled: true
+    log_dir: /data/razhan/15k_hours/outputs/omni_router_base/tensorboard

@@ -163,3 +163,4 @@ docs/
 # Tokenizer models
 *.model
 *.vocab
+reference/
