@@ -14,10 +14,14 @@ Usage:
 import argparse
 import json
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+
+# Suppress CTC backward determinism warning (known issue)
+warnings.filterwarnings("ignore", message=".*ctc_loss_backward_gpu.*")
 import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -178,6 +182,7 @@ def train_epoch(
     config: dict,
     state: TrainingState,
     rank: int,
+    world_size: int = 1,
 ) -> float:
     """Train for one epoch."""
     model.train()
@@ -192,9 +197,19 @@ def train_epoch(
 
     device = next(model.parameters()).device
 
-    progress = tqdm(train_loader, desc=f"Epoch {state.epoch + 1}", disable=rank != 0)
+    # IterableDataset doesn't have a length, so we track iterations manually
+    max_steps_per_epoch = 28539 // (train_cfg.get("batch_size", 8) * world_size)  # Approx steps
 
-    for batch_idx, batch in enumerate(progress):
+    if rank == 0:
+        print(f"  Max steps per epoch: {max_steps_per_epoch}")
+
+    for batch_idx, batch in enumerate(train_loader):
+        if batch_idx >= max_steps_per_epoch:
+            break
+
+        if batch_idx % 100 == 0 and rank == 0:
+            print(f"  Step {batch_idx}/{max_steps_per_epoch}")
+
         # Move batch to device
         batch = {k: v.to(device) for k, v in batch.items()}
 
@@ -230,7 +245,7 @@ def train_epoch(
             if state.global_step % logging_steps == 0 and rank == 0:
                 avg_loss = accumulated_loss
                 lr = scheduler.get_last_lr()[0]
-                progress.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr:.2e}")
+                print(f"  Step {state.global_step}: loss={avg_loss:.4f}, lr={lr:.2e}")
 
             accumulated_loss = 0.0
 
@@ -339,7 +354,8 @@ def main() -> None:
     # Setup reproducibility
     seed = train_cfg.get("seed", 42)
     if train_cfg.get("deterministic", True):
-        enable_deterministic_mode()
+        # Use warn_only=True because CTC loss backward doesn't have deterministic implementation
+        enable_deterministic_mode(warn_only=True)
     set_seed(seed + rank)  # Different seed per rank for data augmentation
 
     # Create output directory
@@ -442,10 +458,12 @@ def main() -> None:
     # Create data loaders
     collator = ASRCollator()
 
+    # Note: IterableDataset with num_workers can cause issues
+    # Using num_workers=0 for simplicity; for large scale, use MapStyleASRDataset
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_cfg.get("batch_size", 32),
-        num_workers=4,
+        num_workers=0,
         collate_fn=collator,
         pin_memory=True,
     )
@@ -504,7 +522,7 @@ def main() -> None:
         # Train epoch
         train_loss = train_epoch(
             model, train_loader, optimizer, scheduler,
-            precision_manager, config, state, rank
+            precision_manager, config, state, rank, world_size
         )
 
         if rank == 0:

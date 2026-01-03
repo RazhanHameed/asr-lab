@@ -43,14 +43,22 @@ class DatasetConfig:
 
 # Dataset configurations matching ABR training setup
 DATASETS: dict[str, DatasetConfig] = {
-    "librispeech_clean": DatasetConfig(
-        name="librispeech_clean",
+    "librispeech_clean_100": DatasetConfig(
+        name="librispeech_clean_100",
         hf_name="librispeech_asr",
         hf_config="clean",
         splits={
-            "train": "train.100+train.360",
+            "train": "train.100",
             "dev": "validation",
             "test": "test",
+        },
+    ),
+    "librispeech_clean_360": DatasetConfig(
+        name="librispeech_clean_360",
+        hf_name="librispeech_asr",
+        hf_config="clean",
+        splits={
+            "train": "train.360",
         },
     ),
     "librispeech_other": DatasetConfig(
@@ -196,14 +204,12 @@ def prepare_dataset(
                     config.hf_config,
                     split=hf_split,
                     streaming=use_streaming,
-                    trust_remote_code=True,
                 )
             else:
                 ds = load_dataset(
                     config.hf_name,
                     split=hf_split,
                     streaming=use_streaming,
-                    trust_remote_code=True,
                 )
         except Exception as e:
             print(f"  Error loading dataset: {e}")

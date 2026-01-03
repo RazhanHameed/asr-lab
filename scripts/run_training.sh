@@ -79,7 +79,7 @@ echo ""
 echo "Starting training..."
 echo ""
 
-torchrun \
+uv run torchrun \
     --nproc_per_node=$GPUS \
     --master_port=$MASTER_PORT \
     scripts/train_distributed.py \

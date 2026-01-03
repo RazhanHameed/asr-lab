@@ -48,8 +48,8 @@ tokenizer:
 training:
   # Optimization
   epochs: 100
-  batch_size: 32  # Per GPU
-  gradient_accumulation_steps: 4  # Effective batch = 32 * 4 * 2 GPUs = 256
+  batch_size: 256  # Per GPU (maximizing A100 80GB utilization)
+  gradient_accumulation_steps: 1  # Effective batch = 256 * 1 * 2 GPUs = 512
   learning_rate: 5.0e-4
   min_learning_rate: 1.0e-6
   weight_decay: 0.01
@@ -89,32 +89,17 @@ distributed:
 
 # Data
 data:
-  # Training manifests (15k hours total)
+  # Training manifests (currently using LibriSpeech, add more as they're prepared)
   train_manifests:
-    - data/manifests/librispeech_clean_train.json
-    - data/manifests/librispeech_other_train.json
-    - data/manifests/voxpopuli_train.json
-    - data/manifests/gigaspeech_train.json
-    - data/manifests/common_voice_train.json
-    - data/manifests/tedlium_train.json
-    - data/manifests/ami_ihm_train.json
-    - data/manifests/spgispeech_train.json
-    - data/manifests/earnings22_train.json
+    - data/manifests/librispeech_train_clean_100.json
 
   # Validation manifests
   val_manifests:
-    - data/manifests/librispeech_clean_dev.json
+    - data/manifests/librispeech_dev_clean.json
 
-  # Test manifests (for final evaluation)
+  # Test manifests
   test_manifests:
-    - data/manifests/librispeech_clean_test.json
-    - data/manifests/librispeech_other_test.json
-    - data/manifests/voxpopuli_test.json
-    - data/manifests/gigaspeech_test.json
-    - data/manifests/spgispeech_test.json
-    - data/manifests/tedlium_test.json
-    - data/manifests/ami_ihm_test.json
-    - data/manifests/earnings22_test.json
+    - data/manifests/librispeech_test_clean.json
 
   # Data filtering
   max_duration: 30.0  # seconds
