@@ -190,28 +190,36 @@ class OmniRouterConfig(ModelConfig):
 
     @classmethod
     def streaming(cls) -> "OmniRouterConfig":
-        """Streaming-optimized MoE model with causal masking.
+        """Streaming 0.6B MoE model matching Apple's omni-router-speechcrawl-streaming-asr-0.6b-v1.
 
-        Suitable for real-time ASR applications.
+        - 613M total params, ~200M activated per token
+        - 16 layers × 4 experts with shared routing
+        - Causal masking for real-time streaming ASR
         """
         return cls(
-            d_model=768,
-            n_layers=18,
-            n_heads=12,
-            mlp_dim=3072,
-            vocab_size=4096,
+            d_model=1024,
+            n_layers=16,
+            n_heads=16,
+            mlp_dim=4096,
+            vocab_size=8192,
             stacking=4,
-            dropout=0.1,
-            n_experts="6x4-6x4-6x8",
+            dropout=0.0,
+            layer_dropout=0.0,
+            content_scale=1.0,
+            n_experts="16x4",
             share_router=True,
-            load_balance_loss_weight=0.01,
-            moe_jitter_eps=0.1,
+            load_balance_loss_weight=10.0,
+            moe_jitter_eps=0.01,
             ln_position=LayerNormPosition.PRE,
+            ln_epsilon=1e-5,
             mask_mode=MaskMode.CAUSAL,
+            bias=False,
             cape_config=CAPEConfig(
                 max_global_shift=0.0,
                 max_local_shift=0.0,
+                max_global_scaling=1.0,
                 normalize=False,
+                freq_scale=1.0,
             ),
         )
 
