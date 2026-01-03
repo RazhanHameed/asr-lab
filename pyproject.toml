@@ -54,7 +54,6 @@ training = [
     "datasets>=2.18.0",
     "tensorboard>=2.16.0",
     "wandb>=0.16.0",
-    "librosa>=0.10.0",
     "soundfile>=0.12.0",
     "accelerate>=0.28.0",
     "jiwer>=3.0.0",
@@ -115,8 +114,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["asr_lab"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=8.0.0",
     "ruff>=0.3.0",
     "mypy>=1.9.0",
