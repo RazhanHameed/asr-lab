@@ -46,6 +46,24 @@ class DatasetConfig:
     text_key: str = "text"
     audio_key: str = "audio"
     requires_auth: bool = False
+    approx_hours: float = 0.0  # Approximate hours in training split
+
+
+# Target hours for 15k training mix
+DATASET_TARGET_HOURS: dict[str, float] = {
+    "librispeech_clean_100": 100,    # Full dataset
+    "librispeech_clean_360": 360,    # Full dataset
+    "librispeech_other": 500,        # Full dataset
+    "voxpopuli": 400,                # Full dataset
+    "tedlium": 450,                  # Full dataset
+    "ami": 100,                      # Full dataset
+    "earnings22": 119,               # Full dataset
+    "common_voice": 2000,            # Sample from ~3000 hours
+    "gigaspeech": 8000,              # Sample from 10k hours (XL)
+    "spgispeech": 3000,              # Sample from 5k hours (L)
+    # peoples_speech excluded - too noisy
+    # Total: ~15,029 hours
+}
 
 
 # Dataset configurations matching ABR training setup
@@ -59,6 +77,7 @@ DATASETS: dict[str, DatasetConfig] = {
             "dev": "validation",
             "test": "test",
         },
+        approx_hours=100,
     ),
     "librispeech_clean_360": DatasetConfig(
         name="librispeech_clean_360",
@@ -67,6 +86,7 @@ DATASETS: dict[str, DatasetConfig] = {
         splits={
             "train": "train.360",
         },
+        approx_hours=360,
     ),
     "librispeech_other": DatasetConfig(
         name="librispeech_other",
@@ -77,6 +97,7 @@ DATASETS: dict[str, DatasetConfig] = {
             "dev": "validation",
             "test": "test",
         },
+        approx_hours=500,
     ),
     "voxpopuli": DatasetConfig(
         name="voxpopuli",
@@ -88,10 +109,11 @@ DATASETS: dict[str, DatasetConfig] = {
             "test": "test",
         },
         text_key="raw_text",
+        approx_hours=400,
     ),
     "common_voice": DatasetConfig(
         name="common_voice",
-        hf_name="mozilla-foundation/common_voice_16_1",
+        hf_name="mozilla-foundation/common_voice_17_0",
         hf_config="en",
         splits={
             "train": "train",
@@ -100,6 +122,7 @@ DATASETS: dict[str, DatasetConfig] = {
         },
         text_key="sentence",
         requires_auth=True,
+        approx_hours=3000,
     ),
     "tedlium": DatasetConfig(
         name="tedlium",
@@ -110,17 +133,19 @@ DATASETS: dict[str, DatasetConfig] = {
             "dev": "validation",
             "test": "test",
         },
+        approx_hours=450,
     ),
     "gigaspeech": DatasetConfig(
         name="gigaspeech",
         hf_name="speechcolab/gigaspeech",
-        hf_config="l",  # l=10k hours, m=1k hours, s=250 hours
+        hf_config="xl",  # xl=10k hours
         splits={
             "train": "train",
             "dev": "validation",
             "test": "test",
         },
         requires_auth=True,
+        approx_hours=10000,
     ),
     "ami": DatasetConfig(
         name="ami",
@@ -131,6 +156,7 @@ DATASETS: dict[str, DatasetConfig] = {
             "dev": "validation",
             "test": "test",
         },
+        approx_hours=100,
     ),
     "spgispeech": DatasetConfig(
         name="spgispeech",
@@ -143,6 +169,7 @@ DATASETS: dict[str, DatasetConfig] = {
         },
         text_key="transcript",
         requires_auth=True,
+        approx_hours=5000,
     ),
     "earnings22": DatasetConfig(
         name="earnings22",
@@ -153,17 +180,7 @@ DATASETS: dict[str, DatasetConfig] = {
             "test": "test",
         },
         text_key="sentence",
-    ),
-    "peoples_speech": DatasetConfig(
-        name="peoples_speech",
-        hf_name="MLCommons/peoples_speech",
-        hf_config="clean",  # clean subset
-        splits={
-            "train": "train",
-            "dev": "validation",
-            "test": "test",
-        },
-        requires_auth=True,
+        approx_hours=119,
     ),
 }
 
@@ -173,6 +190,7 @@ def prepare_dataset(
     base_dir: Path,
     sample_rate: int = 16000,
     max_samples: int | None = None,
+    max_hours: float | None = None,
     use_streaming: bool = True,
 ) -> dict[str, Path]:
     """Prepare a single dataset.
@@ -182,6 +200,7 @@ def prepare_dataset(
         base_dir: Base directory (e.g., /data/razhan)
         sample_rate: Target sample rate
         max_samples: Maximum samples per split
+        max_hours: Maximum hours for training split (None = unlimited)
         use_streaming: Use streaming for large datasets
 
     Returns:
@@ -228,9 +247,16 @@ def prepare_dataset(
         count = 0
         total_duration = 0.0
 
+        # Only apply max_hours to training split
+        split_max_hours = max_hours if split_suffix == "train" else None
+        max_seconds = split_max_hours * 3600 if split_max_hours else None
+
         with open(manifest_path, "w") as f:
             for idx, item in enumerate(tqdm(ds, desc=f"  Processing")):
                 if max_samples and idx >= max_samples:
+                    break
+                if max_seconds and total_duration >= max_seconds:
+                    print(f"\n  Reached {split_max_hours:.0f} hour limit")
                     break
 
                 try:
@@ -318,6 +344,12 @@ def main() -> None:
         help="Prepare all datasets",
     )
     parser.add_argument(
+        "--15k",
+        dest="fifteen_k",
+        action="store_true",
+        help="Prepare 15k hours mix with controlled sampling",
+    )
+    parser.add_argument(
         "--sample_rate",
         type=int,
         default=16000,
@@ -330,27 +362,66 @@ def main() -> None:
         help="Maximum samples per split (for testing)",
     )
     parser.add_argument(
+        "--max_hours",
+        type=float,
+        default=None,
+        help="Maximum hours for training split",
+    )
+    parser.add_argument(
         "--no_streaming",
         action="store_true",
         help="Don't use streaming (downloads full dataset first)",
+    )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Show plan without downloading",
     )
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
 
-    # Determine which datasets to prepare
-    if args.all:
+    # Determine which datasets to prepare and their target hours
+    target_hours: dict[str, float] = {}
+
+    if args.fifteen_k:
+        # Use predefined 15k mix
+        dataset_names = list(DATASET_TARGET_HOURS.keys())
+        target_hours = DATASET_TARGET_HOURS.copy()
+    elif args.all:
         dataset_names = list(DATASETS.keys())
     elif args.datasets:
         dataset_names = args.datasets
     else:
-        print("Error: Specify --datasets or --all")
+        print("Error: Specify --datasets, --all, or --15k")
         print(f"Available datasets: {', '.join(DATASETS.keys())}")
         return
 
-    print(f"Preparing {len(dataset_names)} datasets to {base_dir}:")
+    # Apply global max_hours if specified
+    if args.max_hours:
+        for name in dataset_names:
+            target_hours[name] = args.max_hours
+
+    # Print plan
+    print(f"\nPreparing {len(dataset_names)} datasets to {base_dir}:")
+    print("-" * 60)
+    total_target = 0.0
     for name in dataset_names:
-        print(f"  - {name} -> {base_dir / name}/")
+        config = DATASETS[name]
+        max_h = target_hours.get(name)
+        auth = " (requires auth)" if config.requires_auth else ""
+        if max_h:
+            print(f"  {name}: {max_h:.0f} hours target{auth}")
+            total_target += max_h
+        else:
+            print(f"  {name}: {config.approx_hours:.0f} hours (full){auth}")
+            total_target += config.approx_hours
+    print("-" * 60)
+    print(f"Total target: ~{total_target:.0f} hours")
+
+    if args.dry_run:
+        print("\n[Dry run - no data downloaded]")
+        return
 
     # Prepare each dataset
     all_manifests: dict[str, dict[str, Path]] = {}
@@ -368,6 +439,7 @@ def main() -> None:
                 base_dir,
                 sample_rate=args.sample_rate,
                 max_samples=args.max_samples,
+                max_hours=target_hours.get(name),
                 use_streaming=not args.no_streaming,
             )
             all_manifests[name] = manifests
