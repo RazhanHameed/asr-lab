@@ -1,0 +1,149 @@
+[project]
+name = "asr-lab"
+version = "0.1.0"
+description = "Modular ASR Training Lab - SSM, Whisper, Conformer architectures with reproducible training"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Razhan Hameed" }
+]
+keywords = [
+    "asr", "speech-recognition", "mamba", "ssm", "whisper",
+    "conformer", "fast-conformer", "flash-attention", "reproducible"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+    "torch>=2.5.0",
+    "torchaudio>=2.5.0",
+    "numpy>=2.0.0",
+    "einops>=0.8.0",
+    "sentencepiece>=0.2.0",
+    "tqdm>=4.66.0",
+    "omegaconf>=2.3.0",
+    "hydra-core>=1.3.0",
+]
+
+[project.optional-dependencies]
+# Mamba SSM (requires CUDA)
+mamba = [
+    "mamba-ssm>=2.0.0",
+    "causal-conv1d>=1.2.0",
+]
+
+# Flash Attention (requires CUDA)
+flash = [
+    "flash-attn>=2.5.0",
+]
+
+# Full training stack
+training = [
+    "transformers>=4.40.0",
+    "datasets>=2.18.0",
+    "tensorboard>=2.16.0",
+    "wandb>=0.16.0",
+    "librosa>=0.10.0",
+    "soundfile>=0.12.0",
+    "accelerate>=0.28.0",
+    "jiwer>=3.0.0",
+]
+
+# NVIDIA Transformer Engine for FP8
+transformer-engine = [
+    "transformer-engine>=1.7.0",
+]
+
+# TorchAO for advanced quantization (MXFP8, MXFP4)
+torchao = [
+    "torchao>=0.8.0",
+]
+
+# Reproducible training (Microsoft RepDL)
+reproducible = [
+    "repdl @ git+https://github.com/microsoft/RepDL.git",
+]
+
+# Development tools
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+    "pre-commit>=3.6.0",
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+
+# All CUDA optimizations
+cuda = [
+    "mamba-ssm>=2.0.0",
+    "causal-conv1d>=1.2.0",
+    "flash-attn>=2.5.0",
+    "triton>=2.2.0",
+]
+
+# Everything
+all = [
+    "asr-lab[cuda,training,reproducible,dev]",
+]
+
+[project.scripts]
+asr-train = "scripts.train:main"
+asr-eval = "scripts.evaluate:main"
+asr-infer = "scripts.inference:main"
+
+[project.urls]
+Homepage = "https://github.com/RazhanHameed/asr-lab"
+Documentation = "https://github.com/RazhanHameed/asr-lab#readme"
+Repository = "https://github.com/RazhanHameed/asr-lab"
+Issues = "https://github.com/RazhanHameed/asr-lab/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["asr_lab"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "ANN"]
+ignore = ["E501", "B008", "ANN101", "ANN102", "ANN401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["asr_lab"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=asr_lab"
