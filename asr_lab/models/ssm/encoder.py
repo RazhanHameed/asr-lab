@@ -130,21 +130,39 @@ class FallbackMambaBlock(nn.Module):
         B: torch.Tensor,
         C: torch.Tensor,
     ) -> torch.Tensor:
-        """Simplified SSM scan."""
+        """Simplified SSM scan.
+
+        Args:
+            x: Input tensor (B, L, D) where D is d_inner
+            dt: Time step (B, L, D)
+            A: State matrix (N,) - log parameterized
+            B: Input matrix (B, L, N)
+            C: Output matrix (B, L, N)
+
+        Returns:
+            Output tensor (B, L, D)
+        """
         batch, seq_len, d_inner = x.shape
 
-        # Initialize state
+        # Initialize state (B, D, N)
         h = torch.zeros(batch, d_inner, self.d_state, device=x.device, dtype=x.dtype)
 
         outputs = []
         for t in range(seq_len):
-            # State update: h = A * h + B * x
-            dA = torch.exp(dt[:, t] * A.unsqueeze(0))  # (B, D, N)
-            dB = dt[:, t].unsqueeze(-1) * B[:, t].unsqueeze(1)  # (B, D, N)
-            h = h * dA.unsqueeze(1) + dB * x[:, t].unsqueeze(-1)
+            # dt[:, t] has shape (B, D), A has shape (N,)
+            # dA should be (B, D, N)
+            dt_t = dt[:, t].unsqueeze(-1)  # (B, D, 1)
+            dA = torch.exp(dt_t * A)  # (B, D, N) - broadcasts A across batch and d_inner
 
-            # Output: y = C * h + D * x
-            y = (h * C[:, t].unsqueeze(1)).sum(-1) + self.D * x[:, t]
+            # dB = dt * B where B[:, t] is (B, N)
+            # dB should be (B, D, N) for elementwise with x[:, t].unsqueeze(-1)
+            dB = dt_t * B[:, t].unsqueeze(1)  # (B, D, N)
+
+            # State update: h = dA * h + dB * x
+            h = h * dA + dB * x[:, t].unsqueeze(-1)  # (B, D, N)
+
+            # Output: y = C * h + D * x where C[:, t] is (B, N)
+            y = (h * C[:, t].unsqueeze(1)).sum(-1) + self.D * x[:, t]  # (B, D)
             outputs.append(y)
 
         return torch.stack(outputs, dim=1)

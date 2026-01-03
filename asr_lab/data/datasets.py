@@ -6,9 +6,9 @@ to create large-scale training sets similar to the ABR model training setup.
 
 import json
 import random
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 import torch
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
@@ -184,7 +184,7 @@ class CombinedASRDataset(IterableDataset[dict[str, torch.Tensor]]):
         feature_extractor: FeatureExtractor,
         tokenizer: Tokenizer,
         dataset_weights: dict[str, float] | None = None,
-        augment_fn: callable | None = None,
+        augment_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         self.config = config
         self.feature_extractor = feature_extractor
@@ -309,12 +309,12 @@ class CombinedASRDataset(IterableDataset[dict[str, torch.Tensor]]):
         # Load audio
         waveform = load_audio(sample.audio_path, self.config.sample_rate)
 
-        # Apply augmentation
-        if self.augment_fn is not None:
-            waveform = self.augment_fn(waveform)
-
         # Extract features
         features = self.feature_extractor(waveform)
+
+        # Apply augmentation (SpecAugment operates on features, not waveform)
+        if self.augment_fn is not None:
+            features = self.augment_fn(features)
 
         # Tokenize text
         tokens = torch.tensor(self.tokenizer.encode(sample.text), dtype=torch.long)
