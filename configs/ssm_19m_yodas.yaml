@@ -1,0 +1,86 @@
+# SSM ASR Model Configuration for YODAS-Granary Training
+# Target: 15k hours per epoch from streaming dataset
+
+# Model Configuration
+model:
+  d_model: 256
+  n_layers: 18
+  d_state: 64
+  d_conv: 4
+  expand: 2
+  headdim: 64
+  bidirectional: true
+  chunk_size: 256
+  n_mels: 80
+  vocab_size: 1025  # 1024 + 1 for CTC blank
+  decoder_type: ctc
+  use_flash_attention: true
+  attention_every_n_layers: 4
+  dropout: 0.1
+
+# Feature Extraction
+features:
+  sample_rate: 16000
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  f_min: 0
+  f_max: 8000
+  normalize: true
+
+# Tokenizer
+tokenizer:
+  type: sentencepiece
+  model_path: tokenizers/spm_1024.model
+  vocab_size: 1025  # 1024 + 1 for CTC blank
+
+# Data Configuration (Streaming)
+data:
+  dataset_name: espnet/yodas-granary
+  subset: English
+  split: asr_only
+  max_epoch_hours: 15000  # 15k hours per epoch
+  shuffle_buffer_size: 20000
+  max_audio_duration: 15.0
+  min_audio_duration: 0.5
+
+# Training Configuration
+training:
+  num_epochs: 10
+  batch_size: 16
+  gradient_accumulation_steps: 8  # Effective batch size = 128
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 5000
+  total_steps: 500000  # ~10 epochs of 15k hours
+  precision: bf16
+  num_workers: 0  # IterableDataset doesn't work well with multiprocessing
+  seed: 42
+  output_dir: /data/razhan/15k_hours/outputs/ssm_19m_yodas
+  save_every: 1
+
+# Distributed Training
+distributed:
+  backend: nccl
+  find_unused_parameters: false
+
+# Augmentation
+augmentation:
+  spec_augment:
+    enabled: true
+    freq_mask_param: 27
+    time_mask_param: 100
+    n_freq_masks: 2
+    n_time_masks: 10
+  noise_injection:
+    enabled: false
+
+# Logging
+logging:
+  log_every: 100
+  wandb:
+    enabled: false
+    project: asr-lab
+    name: ssm-19m-yodas

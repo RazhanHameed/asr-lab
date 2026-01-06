@@ -31,33 +31,41 @@ from asr_lab.training.dataset import ASRDataset, ASRCollator, ASRSample
 from asr_lab.evaluation.evaluator import Evaluator, EvaluationConfig
 
 
-def load_model(checkpoint_path: str) -> torch.nn.Module:
+def load_model(checkpoint_path: str) -> tuple[torch.nn.Module, dict]:
     """Load model from checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     config = checkpoint["config"]
 
-    model_type = ModelType(config.get("model_type", "ssm"))
+    # Handle nested config structure (model config under 'model' key)
+    if "model" in config and isinstance(config["model"], dict):
+        model_config_dict = config["model"].copy()
+        model_type_str = model_config_dict.pop("type", "ssm")
+    else:
+        model_config_dict = config.copy()
+        model_type_str = model_config_dict.pop("model_type", "ssm")
+
+    model_type = ModelType(model_type_str)
 
     if model_type == ModelType.SSM:
         from asr_lab.models.ssm import SSMConfig
 
-        model_config = SSMConfig.from_dict(config)
+        model_config = SSMConfig.from_dict(model_config_dict)
         model = SSMASRModel(model_config)
     elif model_type == ModelType.WHISPER:
         from asr_lab.models.whisper import WhisperConfig
 
-        model_config = WhisperConfig.from_dict(config)
+        model_config = WhisperConfig.from_dict(model_config_dict)
         model = WhisperASRModel(model_config)
     elif model_type == ModelType.CONFORMER:
         from asr_lab.models.conformer import ConformerConfig
 
-        model_config = ConformerConfig.from_dict(config)
+        model_config = ConformerConfig.from_dict(model_config_dict)
         model = ConformerASRModel(model_config)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
     model.load_state_dict(checkpoint["model_state_dict"])
-    return model
+    return model, config
 
 
 def load_fleurs_dataset(
@@ -65,54 +73,160 @@ def load_fleurs_dataset(
     split: str,
     feature_extractor: MelSpectrogramExtractor,
     tokenizer: CharacterTokenizer,
+    cache_dir: str = "/data/razhan/cache/fleurs",
 ) -> ASRDataset:
-    """Load FLEURS dataset for a specific language."""
-    try:
-        from datasets import load_dataset
+    """Load FLEURS dataset for a specific language from raw files."""
+    import csv
+    import tarfile
+    import tempfile
+    from huggingface_hub import hf_hub_download
 
-        ds = load_dataset("google/fleurs", language, split=split)
+    cache_path = Path(cache_dir) / language / split
+    cache_path.mkdir(parents=True, exist_ok=True)
 
-        samples = []
-        for item in ds:
+    # Download TSV file
+    tsv_path = hf_hub_download(
+        repo_id="google/fleurs",
+        filename=f"data/{language}/{split}.tsv",
+        repo_type="dataset",
+        cache_dir=cache_dir,
+    )
+
+    # Download and extract audio
+    audio_tar_path = hf_hub_download(
+        repo_id="google/fleurs",
+        filename=f"data/{language}/audio/{split}.tar.gz",
+        repo_type="dataset",
+        cache_dir=cache_dir,
+    )
+
+    # Extract audio files if not already done
+    audio_dir = cache_path / "audio"
+    if not audio_dir.exists() or len(list(audio_dir.glob("*.wav"))) == 0:
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        print(f"    Extracting audio to {audio_dir}...")
+        with tarfile.open(audio_tar_path, "r:gz") as tar:
+            tar.extractall(audio_dir)
+
+    # Parse TSV and create samples
+    # FLEURS TSV format (no header): id, filename, raw_transcription, transcription, chars, duration_samples, gender
+    samples = []
+    with open(tsv_path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) < 4:
+                continue
+
+            filename = parts[1]  # e.g., "12741024238657315067.wav"
+            transcription = parts[3]  # normalized transcription
+
+            if not filename or not transcription:
+                continue
+
+            # Find audio file (extracted to audio_dir/split/filename)
+            audio_file = audio_dir / split / filename
+            if not audio_file.exists():
+                # Try other locations
+                for pattern in [audio_dir / filename]:
+                    if pattern.exists():
+                        audio_file = pattern
+                        break
+
+            if not audio_file.exists():
+                # Try finding it recursively
+                matches = list(audio_dir.rglob(filename))
+                if matches:
+                    audio_file = matches[0]
+
+            if not audio_file.exists():
+                continue
+
             samples.append(
                 ASRSample(
-                    audio_path=item["audio"]["path"],
-                    text=item["transcription"].lower(),
-                    duration=len(item["audio"]["array"])
-                    / item["audio"]["sampling_rate"],
+                    audio_path=str(audio_file),
+                    text=transcription.lower(),
+                    duration=None,  # Will be computed when loading
                     language=language,
                 )
             )
 
-        return ASRDataset(samples, feature_extractor, tokenizer)
-
-    except ImportError:
-        raise ImportError(
-            "datasets library required for FLEURS. Install with: pip install datasets"
-        )
+    print(f"    Loaded {len(samples)} samples from FLEURS {language}/{split}")
+    return ASRDataset(samples, feature_extractor, tokenizer)
 
 
 def load_librispeech_dataset(
     split: str,
     feature_extractor: MelSpectrogramExtractor,
     tokenizer: CharacterTokenizer,
+    manifest_base_dir: str = "/data/razhan/15k_hours",
 ) -> ASRDataset:
-    """Load LibriSpeech dataset."""
+    """Load LibriSpeech dataset from prepared manifests or HuggingFace.
+
+    Args:
+        split: Dataset split (e.g., "test.clean", "test.other")
+        feature_extractor: Feature extractor for audio
+        tokenizer: Tokenizer for text
+        manifest_base_dir: Base directory containing prepared manifests
+    """
+    # Map HuggingFace split names to manifest names
+    split_to_manifest = {
+        "test.clean": ("librispeech_clean_100", "test"),
+        "test.other": ("librispeech_other", "test"),
+        "validation.clean": ("librispeech_clean_100", "dev"),
+        "validation.other": ("librispeech_other", "dev"),
+    }
+
+    # Try to use prepared manifest first
+    if split in split_to_manifest:
+        dataset_name, manifest_split = split_to_manifest[split]
+        manifest_path = Path(manifest_base_dir) / dataset_name / "manifests" / f"{dataset_name}_{manifest_split}.json"
+
+        if manifest_path.exists():
+            print(f"    Using prepared manifest: {manifest_path}")
+            return ASRDataset.from_manifest(manifest_path, feature_extractor, tokenizer)
+
+    # Fall back to HuggingFace loading with AudioDecoder handling
     try:
         from datasets import load_dataset
+        import tempfile
+        import numpy as np
+        import soundfile as sf
 
         ds = load_dataset("librispeech_asr", split=split)
 
         samples = []
-        for item in ds:
-            samples.append(
-                ASRSample(
-                    audio_path=item["audio"]["path"],
-                    text=item["text"].lower(),
-                    duration=len(item["audio"]["array"])
-                    / item["audio"]["sampling_rate"],
+        temp_dir = Path(tempfile.mkdtemp(prefix="librispeech_eval_"))
+        print(f"    Saving audio to temp dir: {temp_dir}")
+
+        for idx, item in enumerate(ds):
+            audio_data = item.get("audio")
+            if audio_data is None:
+                continue
+
+            # Handle AudioDecoder format (HuggingFace datasets 4.x)
+            if hasattr(audio_data, 'metadata'):
+                audio_array = np.array(audio_data['array'], dtype=np.float32)
+                audio_sr = audio_data.metadata.sample_rate
+            # Handle legacy dict format
+            elif isinstance(audio_data, dict):
+                audio_array = np.array(audio_data.get("array"), dtype=np.float32)
+                audio_sr = audio_data.get("sampling_rate", 16000)
+            else:
+                continue
+
+            # Save to temp file
+            audio_path = temp_dir / f"sample_{idx:06d}.wav"
+            sf.write(str(audio_path), audio_array, audio_sr, subtype='PCM_16')
+
+            text = item.get("text", "")
+            if text:
+                samples.append(
+                    ASRSample(
+                        audio_path=str(audio_path),
+                        text=text.lower(),
+                        duration=len(audio_array) / audio_sr,
+                    )
                 )
-            )
 
         return ASRDataset(samples, feature_extractor, tokenizer)
 
@@ -186,15 +300,25 @@ def main() -> None:
 
     # Load model
     print(f"Loading model from {args.checkpoint}...")
-    model = load_model(args.checkpoint)
+    model, full_config = load_model(args.checkpoint)
     print(f"Model parameters: {model.count_parameters():,}")
 
-    # Create feature extractor
-    feature_config = FeatureConfig(sample_rate=16000, n_mels=80)
+    # Create feature extractor from config
+    features_config = full_config.get("features", {})
+    feature_config = FeatureConfig(
+        sample_rate=features_config.get("sample_rate", 16000),
+        n_mels=features_config.get("n_mels", 80),
+    )
     feature_extractor = MelSpectrogramExtractor(feature_config)
 
-    # Create tokenizer
-    tokenizer = CharacterTokenizer()
+    # Create tokenizer from config
+    tokenizer_config = full_config.get("tokenizer", {})
+    if tokenizer_config.get("type") == "sentencepiece":
+        from asr_lab.tokenizers.base import BPETokenizer
+        # add_blank=True is required for CTC models (blank token at position 0)
+        tokenizer = BPETokenizer(tokenizer_config["model_path"], add_blank=True)
+    else:
+        tokenizer = CharacterTokenizer()
 
     # Create evaluator config
     eval_config = EvaluationConfig(
